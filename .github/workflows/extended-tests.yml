@@ -1,0 +1,315 @@
+name: Extended API Tests (Bonus Points)
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  extended-tests:
+    name: Extended Functionality Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Build and start server
+        run: |
+          go build -o server cmd/main.go
+          GOEXPERIMENT=rangefunc ./server &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/tasks > /dev/null 2>&1; then
+              echo "✅ Server is ready"
+              break
+            fi
+            sleep 1
+          done
+
+      # BONUS TEST 1: Filtering by status
+      - name: Bonus Test 1 - Filter by status
+        continue-on-error: true
+        run: |
+          echo "🎯 Bonus Test 1: Filtering by status"
+
+          # Create tasks with different statuses
+          curl -s -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Todo Task","status":"todo"}' > /dev/null
+
+          curl -s -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"title":"In Progress Task","status":"in_progress"}' > /dev/null
+
+          sleep 1
+
+          # Test filtering
+          RESPONSE=$(curl -s "http://localhost:8080/tasks?status=todo")
+
+          if echo "$RESPONSE" | jq -e '.items' > /dev/null 2>&1; then
+            TODO_COUNT=$(echo "$RESPONSE" | jq '[.items[] | select(.status == "todo")] | length')
+            if [ "$TODO_COUNT" -gt 0 ]; then
+              echo "✅ Status filtering works"
+              exit 0
+            fi
+          fi
+
+          echo "⚠️  Status filtering not implemented or not working"
+          exit 1
+
+      # BONUS TEST 2: Filtering by tags
+      - name: Bonus Test 2 - Filter by tags
+        continue-on-error: true
+        run: |
+          echo "🎯 Bonus Test 2: Filtering by tags"
+
+          # Create task with specific tag
+          RESPONSE=$(curl -s -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Tagged Task","tags":["urgent","work"]}')
+
+          sleep 1
+
+          # Test tag filtering
+          FILTER_RESPONSE=$(curl -s "http://localhost:8080/tasks?tag=urgent")
+
+          if echo "$FILTER_RESPONSE" | jq -e '.items' > /dev/null 2>&1; then
+            FOUND=$(echo "$FILTER_RESPONSE" | jq '[.items[] | select(.tags[] | contains("urgent"))] | length')
+            if [ "$FOUND" -gt 0 ]; then
+              echo "✅ Tag filtering works"
+              exit 0
+            fi
+          fi
+
+          echo "⚠️  Tag filtering not implemented or not working"
+          exit 1
+
+      # BONUS TEST 3: Search functionality
+      - name: Bonus Test 3 - Search in title/content
+        continue-on-error: true
+        run: |
+          echo "🎯 Bonus Test 3: Search functionality"
+
+          # Create searchable task
+          curl -s -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Unique Search Term ABC123","content":"Test content"}' > /dev/null
+
+          sleep 1
+
+          # Test search
+          SEARCH_RESPONSE=$(curl -s "http://localhost:8080/tasks?q=ABC123")
+
+          if echo "$SEARCH_RESPONSE" | jq -e '.items' > /dev/null 2>&1; then
+            if echo "$SEARCH_RESPONSE" | jq -e '.items[] | select(.title | contains("ABC123"))' > /dev/null 2>&1; then
+              echo "✅ Search functionality works"
+              exit 0
+            fi
+          fi
+
+          echo "⚠️  Search not implemented or not working"
+          exit 1
+
+      # BONUS TEST 4: Pagination
+      - name: Bonus Test 4 - Pagination
+        continue-on-error: true
+        run: |
+          echo "🎯 Bonus Test 4: Pagination"
+
+          # Create multiple tasks
+          for i in {1..15}; do
+            curl -s -X POST http://localhost:8080/tasks \
+              -H "Content-Type: application/json" \
+              -d "{\"title\":\"Task $i\"}" > /dev/null
+          done
+
+          sleep 1
+
+          # Test pagination
+          RESPONSE=$(curl -s "http://localhost:8080/tasks?page=1&pageSize=5")
+
+          if echo "$RESPONSE" | jq -e '.items' > /dev/null 2>&1; then
+            PAGE=$(echo "$RESPONSE" | jq -r '.page // empty')
+            PAGE_SIZE=$(echo "$RESPONSE" | jq -r '.pageSize // empty')
+            TOTAL=$(echo "$RESPONSE" | jq -r '.total // empty')
+            ITEMS_COUNT=$(echo "$RESPONSE" | jq '.items | length')
+            
+            if [ ! -z "$PAGE" ] && [ ! -z "$PAGE_SIZE" ] && [ ! -z "$TOTAL" ]; then
+              if [ "$ITEMS_COUNT" -le 5 ]; then
+                echo "✅ Pagination works correctly"
+                exit 0
+              fi
+            fi
+          fi
+
+          echo "⚠️  Pagination not fully implemented"
+          exit 1
+
+      # BONUS TEST 5: Sorting
+      - name: Bonus Test 5 - Sorting by priority
+        continue-on-error: true
+        run: |
+          echo "🎯 Bonus Test 5: Sorting"
+
+          # Create tasks with different priorities
+          curl -s -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Low Priority","priority":"low"}' > /dev/null
+
+          curl -s -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"title":"High Priority","priority":"high"}' > /dev/null
+
+          sleep 1
+
+          # Test sorting
+          RESPONSE=$(curl -s "http://localhost:8080/tasks?sort=priority,desc")
+
+          if echo "$RESPONSE" | jq -e '.items[0]' > /dev/null 2>&1; then
+            FIRST_PRIORITY=$(echo "$RESPONSE" | jq -r '.items[0].priority // empty')
+            if [ "$FIRST_PRIORITY" = "high" ]; then
+              echo "✅ Sorting works correctly"
+              exit 0
+            fi
+          fi
+
+          echo "⚠️  Sorting not implemented or not working"
+          exit 1
+
+      # BONUS TEST 6: Invalid JSON handling
+      - name: Bonus Test 6 - Invalid JSON error handling
+        continue-on-error: true
+        run: |
+          echo "🎯 Bonus Test 6: Invalid JSON handling"
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{invalid json}')
+
+          if [ "$HTTP_STATUS" = "400" ]; then
+            echo "✅ Invalid JSON handled correctly (400)"
+            exit 0
+          fi
+
+          echo "⚠️  Invalid JSON should return 400, got $HTTP_STATUS"
+          exit 1
+
+      # BONUS TEST 7: Validation error format
+      - name: Bonus Test 7 - Error response format
+        continue-on-error: true
+        run: |
+          echo "🎯 Bonus Test 7: Error response format"
+
+          RESPONSE=$(curl -s -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"content":"No title"}')
+
+          # Check for error structure
+          if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
+            ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // empty')
+            ERROR_MESSAGE=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+            
+            if [ ! -z "$ERROR_CODE" ] && [ ! -z "$ERROR_MESSAGE" ]; then
+              echo "✅ Error response format is correct"
+              exit 0
+            fi
+          fi
+
+          echo "⚠️  Error response format not matching spec"
+          exit 1
+
+      # BONUS TEST 8: Content-Type header
+      - name: Bonus Test 8 - Response headers
+        continue-on-error: true
+        run: |
+          echo "🎯 Bonus Test 8: Response headers"
+
+          HEADERS=$(curl -s -I -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Test"}')
+
+          if echo "$HEADERS" | grep -i "content-type: application/json" > /dev/null; then
+            echo "✅ Content-Type header is correct"
+            
+            # Check for Location header on create
+            if echo "$HEADERS" | grep -i "location:" > /dev/null; then
+              echo "✅ Location header is present"
+              exit 0
+            fi
+          fi
+
+          echo "⚠️  Response headers not fully correct"
+          exit 1
+
+      # BONUS TEST 9: Concurrent requests safety
+      - name: Bonus Test 9 - Concurrent safety (basic)
+        continue-on-error: true
+        run: |
+          echo "🎯 Bonus Test 9: Concurrent request handling"
+
+          # Send multiple concurrent requests
+          for i in {1..10}; do
+            curl -s -X POST http://localhost:8080/tasks \
+              -H "Content-Type: application/json" \
+              -d "{\"title\":\"Concurrent Task $i\"}" &
+          done
+
+          wait
+          sleep 2
+
+          # Check if all tasks were created
+          RESPONSE=$(curl -s "http://localhost:8080/tasks")
+          CONCURRENT_COUNT=$(echo "$RESPONSE" | jq '[.items[] | select(.title | startswith("Concurrent Task"))] | length')
+
+          if [ "$CONCURRENT_COUNT" -ge 8 ]; then
+            echo "✅ Concurrent requests handled correctly"
+            exit 0
+          fi
+
+          echo "⚠️  Possible concurrency issues (created $CONCURRENT_COUNT/10 tasks)"
+          exit 1
+
+      # BONUS TEST 10: Tag validation and normalization
+      - name: Bonus Test 10 - Tag validation
+        continue-on-error: true
+        run: |
+          echo "🎯 Bonus Test 10: Tag validation"
+
+          # Test with whitespace and duplicates
+          RESPONSE=$(curl -s -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"title":"Test","tags":["  work  ","work","home"]}')
+
+          if echo "$RESPONSE" | jq -e '.tags' > /dev/null 2>&1; then
+            TAGS=$(echo "$RESPONSE" | jq -c '.tags')
+            # Check if duplicates removed and whitespace trimmed
+            if echo "$TAGS" | jq -e 'length <= 2' > /dev/null 2>&1; then
+              echo "✅ Tag validation and normalization works"
+              exit 0
+            fi
+          fi
+
+          echo "⚠️  Tag validation/normalization not implemented"
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ ! -z "$SERVER_PID" ]; then
+            kill $SERVER_PID 2>/dev/null || true
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 🎓 Extended Tests Summary"
+          echo "These tests check advanced features for bonus points."
+          echo "Passing these tests demonstrates deeper understanding of the requirements."

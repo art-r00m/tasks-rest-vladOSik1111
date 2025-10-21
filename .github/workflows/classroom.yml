@@ -1,0 +1,292 @@
+name: GitHub Classroom Workflow
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  checks: write
+  actions: read
+  contents: read
+
+jobs:
+  build:
+    name: Autograding
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-classroom[bot]'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Download dependencies
+        run: go mod download || true
+
+      - name: Build application
+        id: build
+        run: |
+          if go build -o server cmd/main.go; then
+            echo "✅ Build successful"
+            echo "build_status=success" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Build failed"
+            echo "build_status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Start server
+        run: |
+          GOEXPERIMENT=rangefunc ./server &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          echo "Started server with PID: $SERVER_PID"
+
+          # Wait for server to be ready
+          echo "Waiting for server to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/tasks > /dev/null 2>&1; then
+              echo "✅ Server is ready"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "❌ Server failed to start"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      # TEST 1: POST /tasks - Create task (25 points)
+      - name: Test 1 - POST /tasks creates task
+        id: test_create
+        run: |
+          echo "🧪 Test 1: Creating a task"
+
+          RESPONSE=$(curl -s -w "\nHTTPSTATUS:%{http_code}" -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{
+              "title": "Test Task",
+              "content": "This is a test task",
+              "priority": "high",
+              "tags": ["test", "automation"]
+            }')
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTPSTATUS:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTPSTATUS:/d')
+
+          echo "Response status: $HTTP_STATUS"
+          echo "Response body: $BODY"
+
+          if [ "$HTTP_STATUS" != "201" ]; then
+            echo "❌ Expected status 201, got $HTTP_STATUS"
+            exit 1
+          fi
+
+          # Extract and validate task ID
+          TASK_ID=$(echo "$BODY" | jq -r '.id' 2>/dev/null || echo "")
+          if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "null" ]; then
+            echo "❌ No task ID in response"
+            exit 1
+          fi
+
+          # Validate required fields
+          TITLE=$(echo "$BODY" | jq -r '.title' 2>/dev/null || echo "")
+          STATUS=$(echo "$BODY" | jq -r '.status' 2>/dev/null || echo "")
+
+          if [ "$TITLE" != "Test Task" ]; then
+            echo "❌ Title mismatch"
+            exit 1
+          fi
+
+          if [ "$STATUS" != "todo" ]; then
+            echo "❌ Default status should be 'todo', got '$STATUS'"
+            exit 1
+          fi
+
+          echo "TASK_ID=$TASK_ID" >> $GITHUB_ENV
+          echo "✅ Test 1 passed: Task created successfully"
+
+      # TEST 2: GET /tasks - List tasks (15 points)
+      - name: Test 2 - GET /tasks returns list
+        id: test_list
+        run: |
+          echo "🧪 Test 2: Getting task list"
+
+          RESPONSE=$(curl -s -w "\nHTTPSTATUS:%{http_code}" http://localhost:8080/tasks)
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTPSTATUS:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTPSTATUS:/d')
+
+          echo "Response status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "❌ Expected status 200, got $HTTP_STATUS"
+            exit 1
+          fi
+
+          # Check for pagination structure
+          if ! echo "$BODY" | jq -e '.items' > /dev/null 2>&1; then
+            echo "❌ Response should have 'items' field"
+            exit 1
+          fi
+
+          # Check if our created task is in the list
+          FOUND=$(echo "$BODY" | jq --arg id "$TASK_ID" '.items[] | select(.id == $id)' 2>/dev/null)
+          if [ -z "$FOUND" ]; then
+            echo "❌ Created task not found in list"
+            exit 1
+          fi
+
+          echo "✅ Test 2 passed: Task list retrieved successfully"
+
+      # TEST 3: GET /tasks/{id} - Get single task (15 points)
+      - name: Test 3 - GET /tasks/{id} returns task
+        id: test_get
+        run: |
+          echo "🧪 Test 3: Getting single task by ID"
+
+          RESPONSE=$(curl -s -w "\nHTTPSTATUS:%{http_code}" http://localhost:8080/tasks/$TASK_ID)
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTPSTATUS:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTPSTATUS:/d')
+
+          echo "Response status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "❌ Expected status 200, got $HTTP_STATUS"
+            exit 1
+          fi
+
+          # Validate task data
+          RETURNED_ID=$(echo "$BODY" | jq -r '.id' 2>/dev/null || echo "")
+          if [ "$RETURNED_ID" != "$TASK_ID" ]; then
+            echo "❌ Task ID mismatch"
+            exit 1
+          fi
+
+          echo "✅ Test 3 passed: Task retrieved by ID successfully"
+
+      # TEST 4: PATCH /tasks/{id} - Update task (20 points)
+      - name: Test 4 - PATCH /tasks/{id} updates task
+        id: test_update
+        run: |
+          echo "🧪 Test 4: Updating task"
+
+          RESPONSE=$(curl -s -w "\nHTTPSTATUS:%{http_code}" -X PATCH http://localhost:8080/tasks/$TASK_ID \
+            -H "Content-Type: application/json" \
+            -d '{"status": "in_progress", "priority": "low"}')
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTPSTATUS:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTPSTATUS:/d')
+
+          echo "Response status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "❌ Expected status 200, got $HTTP_STATUS"
+            exit 1
+          fi
+
+          # Verify updates
+          STATUS=$(echo "$BODY" | jq -r '.status' 2>/dev/null || echo "")
+          PRIORITY=$(echo "$BODY" | jq -r '.priority' 2>/dev/null || echo "")
+
+          if [ "$STATUS" != "in_progress" ]; then
+            echo "❌ Status not updated correctly, got '$STATUS'"
+            exit 1
+          fi
+
+          if [ "$PRIORITY" != "low" ]; then
+            echo "❌ Priority not updated correctly, got '$PRIORITY'"
+            exit 1
+          fi
+
+          # Verify updatedAt changed
+          UPDATED_AT=$(echo "$BODY" | jq -r '.updatedAt' 2>/dev/null || echo "")
+          if [ -z "$UPDATED_AT" ] || [ "$UPDATED_AT" = "null" ]; then
+            echo "❌ updatedAt field missing or invalid"
+            exit 1
+          fi
+
+          echo "✅ Test 4 passed: Task updated successfully"
+
+      # TEST 5: DELETE /tasks/{id} - Delete task (15 points)
+      - name: Test 5 - DELETE /tasks/{id} deletes task
+        id: test_delete
+        run: |
+          echo "🧪 Test 5: Deleting task"
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE http://localhost:8080/tasks/$TASK_ID)
+
+          echo "Response status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" != "204" ]; then
+            echo "❌ Expected status 204, got $HTTP_STATUS"
+            exit 1
+          fi
+
+          # Verify task is deleted
+          sleep 1
+          VERIFY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/tasks/$TASK_ID)
+
+          if [ "$VERIFY_STATUS" != "404" ]; then
+            echo "❌ Task should return 404 after deletion, got $VERIFY_STATUS"
+            exit 1
+          fi
+
+          echo "✅ Test 5 passed: Task deleted successfully"
+
+      # TEST 6: Validation - Missing required field (5 points)
+      - name: Test 6 - Validation for missing title
+        id: test_validation
+        run: |
+          echo "🧪 Test 6: Testing validation"
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"content": "No title provided"}')
+
+          echo "Response status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" != "422" ] && [ "$HTTP_STATUS" != "400" ]; then
+            echo "❌ Expected status 422 or 400 for validation error, got $HTTP_STATUS"
+            exit 1
+          fi
+
+          echo "✅ Test 6 passed: Validation works correctly"
+
+      # TEST 7: Error handling - 404 Not Found (5 points)
+      - name: Test 7 - 404 for non-existent task
+        id: test_not_found
+        run: |
+          echo "🧪 Test 7: Testing 404 error"
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/tasks/non-existent-id-12345)
+
+          echo "Response status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" != "404" ]; then
+            echo "❌ Expected status 404, got $HTTP_STATUS"
+            exit 1
+          fi
+
+          echo "✅ Test 7 passed: 404 error handled correctly"
+
+      - name: Cleanup - Stop server
+        if: always()
+        run: |
+          if [ ! -z "$SERVER_PID" ]; then
+            echo "Stopping server (PID: $SERVER_PID)"
+            kill $SERVER_PID 2>/dev/null || true
+            sleep 2
+            kill -9 $SERVER_PID 2>/dev/null || true
+          fi
+
+      - name: Autograding Reporter
+        uses: education/autograding-grading-reporter@v1
+        if: always()
+        with:
+          runners: |
+            test_create,test_list,test_get,test_update,test_delete,test_validation,test_not_found

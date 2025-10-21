@@ -1,0 +1,74 @@
+{
+  "tests": [
+    {
+      "name": "Test 1: POST /tasks - Create Task",
+      "setup": "",
+      "run": "echo 'Covered by main workflow'",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": 25
+    },
+    {
+      "name": "Test 2: GET /tasks - List Tasks",
+      "setup": "",
+      "run": "echo 'Covered by main workflow'",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": 15
+    },
+    {
+      "name": "Test 3: GET /tasks/{id} - Get Task by ID",
+      "setup": "",
+      "run": "echo 'Covered by main workflow'",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": 15
+    },
+    {
+      "name": "Test 4: PATCH /tasks/{id} - Update Task",
+      "setup": "",
+      "run": "echo 'Covered by main workflow'",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": 20
+    },
+    {
+      "name": "Test 5: DELETE /tasks/{id} - Delete Task",
+      "setup": "",
+      "run": "echo 'Covered by main workflow'",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": 15
+    },
+    {
+      "name": "Test 6: Validation - Missing Required Field",
+      "setup": "",
+      "run": "echo 'Covered by main workflow'",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": 5
+    },
+    {
+      "name": "Test 7: Error Handling - 404 Not Found",
+      "setup": "",
+      "run": "echo 'Covered by main workflow'",
+      "input": "",
+      "output": "",
+      "comparison": "included",
+      "timeout": 10,
+      "points": 5
+    }
+  ]
+}
